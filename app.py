@@ -1,21 +1,19 @@
-import gradio as gr
-from openai import OpenAI
+import streamlit as st
+import openai
 import os
 import json
-from datetime import datetime
 import csv
+from datetime import datetime
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# رمز عبور ادمین (در Settings → Secrets قرار دهید)
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")  # پیش‌فرض: admin123
-
-# مسیر ذخیره‌سازی
-STORAGE_PATH = "/data" if os.path.exists("/data") else "."
+# محیط و تنظیمات اولیه
+openai.api_key = os.getenv("OPENAI_API_KEY")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+STORAGE_PATH = "./"
 CHAT_LOG_FILE = os.path.join(STORAGE_PATH, "chat_logs.json")
 CSV_LOG_FILE = os.path.join(STORAGE_PATH, "chat_logs.csv")
 
-SYSTEM_PROMPT = """## Character Identity
+SYSTEM_PROMPT = """
+## Character Identity
 Your name is Dr. Alex Harper ("Doc Alex") - a 28-year-old health counselor who overcame vaping addiction.
 
 ## Personality
@@ -35,7 +33,8 @@ Started vaping at 16, addicted for 5 years, quit at 21. Now helps teens avoid th
 - Personal anecdotes: "When I was 16..."
 
 ## Mission
-Help teens understand they deserve freedom from addiction. Make prevention cool, real, and personal."""
+Help teens understand they deserve freedom from addiction. Make prevention cool, real, and personal.
+"""
 
 def save_chat_to_json(user_message, bot_response, session_id=None):
     try:
@@ -43,7 +42,6 @@ def save_chat_to_json(user_message, bot_response, session_id=None):
         if os.path.exists(CHAT_LOG_FILE):
             with open(CHAT_LOG_FILE, 'r', encoding='utf-8') as f:
                 logs = json.load(f)
-        
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id or datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -51,7 +49,6 @@ def save_chat_to_json(user_message, bot_response, session_id=None):
             "bot": bot_response
         }
         logs.append(log_entry)
-        
         with open(CHAT_LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump(logs, f, indent=2, ensure_ascii=False)
         return True
@@ -79,14 +76,12 @@ def save_chat_to_csv(user_message, bot_response, session_id=None):
 
 def chat_function(message, history):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
     for user_msg, assistant_msg in history:
         messages.append({"role": "user", "content": user_msg})
         messages.append({"role": "assistant", "content": assistant_msg})
-    
     messages.append({"role": "user", "content": message})
-    
-    response = client.chat.completions.create(
+
+    response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.8,
@@ -94,228 +89,101 @@ def chat_function(message, history):
         presence_penalty=0.6,
         frequency_penalty=0.3
     )
-    
-    bot_response = response.choices[0].message.content
-    
-    # ذخیره بدون نمایش به کاربر
+    bot_response = response.choices[0].message["content"]
     session_id = datetime.now().strftime("%Y%m%d_%H%M")
     save_chat_to_json(message, bot_response, session_id)
     save_chat_to_csv(message, bot_response, session_id)
-    
     return bot_response
 
-def verify_admin(password):
-    """چک کردن رمز عبور ادمین"""
-    if password == ADMIN_PASSWORD:
-        return True, get_admin_stats()
-    else:
-        return False, "❌ Wrong password!"
-
 def get_admin_stats():
-    """آمار کامل برای ادمین"""
     try:
         if os.path.exists(CHAT_LOG_FILE):
             with open(CHAT_LOG_FILE, 'r', encoding='utf-8') as f:
                 logs = json.load(f)
-            
             total = len(logs)
             sessions = len(set(log['session_id'] for log in logs))
-            
+            latest = logs[-1]['timestamp'] if logs else 'N/A'
             return f"""✅ **Access Granted!**
-
 📊 **Statistics:**
 - Total messages: {total}
 - Unique sessions: {sessions}
-- Latest: {logs[-1]['timestamp'] if logs else 'N/A'}
-
+- Latest: {latest}
 You can now download the logs below."""
         return "✅ Access granted! No data yet."
     except:
         return "❌ Error reading data"
 
-def download_logs_admin(password):
-    """دانلود فقط با پسورد صحیح"""
+def verify_admin(password):
     if password == ADMIN_PASSWORD:
-        if os.path.exists(CSV_LOG_FILE):
-            return CSV_LOG_FILE
-        return None
+        return True, get_admin_stats()
+    else:
+        return False, "❌ Wrong password!"
+
+def download_logs_admin(password):
+    if password == ADMIN_PASSWORD and os.path.exists(CSV_LOG_FILE):
+        with open(CSV_LOG_FILE, "rb") as f:
+            return f.read()
     return None
 
-# CSS
-mobile_css = """
-.gradio-container {
-    max-width: 100% !important;
-    margin: 0 auto !important;
-    padding: 0 !important;
-}
+# Frontend با Streamlit
+st.set_page_config(page_title="Dr. Alex Chatbot", page_icon="🚭")
+st.markdown("""
+# 🚭 Dr. Alex Harper
+### Your friend who gets it 💙
 
-footer {display: none !important;}
+**Hey! I'm Alex**
 
-h1 {
-    color: #2196F3 !important;
-    text-align: center !important;
-    font-size: clamp(1.5rem, 5vw, 2.5rem) !important;
-    padding: 10px !important;
-    margin: 10px 0 !important;
-}
+I started vaping at 16, got addicted for 5 years, and finally broke free at 21. 
+Now I help teens like you understand what I wish someone told me back then.
 
-h3 {
-    font-size: clamp(0.9rem, 3vw, 1.2rem) !important;
-    text-align: center !important;
-    color: #666 !important;
-    padding: 5px 10px !important;
-}
+_No lectures, no judgment - just real talk from someone who's lived it._
+""")
 
-#chatbot {
-    border-radius: 12px !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-    min-height: 400px !important;
-    max-height: 60vh !important;
-}
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
 
-textarea, input[type="text"], input[type="password"] {
-    font-size: 16px !important;
-    padding: 12px !important;
-    border-radius: 12px !important;
-    border: 2px solid #e0e0e0 !important;
-    min-height: 50px !important;
-}
+user_message = st.text_input("💬 What's on your mind?", key="user_input")
+submit = st.button("Send 📤")
 
-button {
-    min-height: 44px !important;
-    font-size: clamp(0.9rem, 3vw, 1rem) !important;
-    padding: 12px 20px !important;
-    border-radius: 12px !important;
-    font-weight: 600 !important;
-    margin: 5px !important;
-}
+if submit and user_message:
+    # تاریخچه برای مدل را تبدیل کن
+    history_tuples = []
+    for i in range(0, len(st.session_state["chat_history"]) - 1, 2):
+        if i+1 < len(st.session_state["chat_history"]):
+            history_tuples.append(
+                (st.session_state["chat_history"][i]['content'], st.session_state["chat_history"][i+1]['content'])
+            )
+    bot_message = chat_function(user_message, history_tuples)
+    st.session_state["chat_history"].append({"role": "user", "content": user_message})
+    st.session_state["chat_history"].append({"role": "assistant", "content": bot_message})
 
-.gr-row {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 8px !important;
-}
+if st.button("Clear 🗑️"):
+    st.session_state["chat_history"] = []
 
-@media (min-width: 768px) {
-    .gradio-container {
-        max-width: 900px !important;
-        padding: 20px !important;
-    }
-}
-"""
+# نمایش تاریخچه چت
+for msg in st.session_state["chat_history"]:
+    if msg["role"] == "user":
+        st.markdown(f'**You:** {msg["content"]}')
+    else:
+        st.markdown(f'**Dr. Alex:** {msg["content"]}')
 
-# ساخت رابط
-with gr.Blocks(theme=gr.themes.Soft(), css=mobile_css, title="Dr. Alex") as demo:
-    
-    gr.Markdown("""
-    # 🚭 Dr. Alex Harper
-    ### Your friend who gets it 💙
-    """)
-    
-    with gr.Accordion("👋 About Me", open=False):
-        gr.Markdown("""
-        **Hey! I'm Alex**
-        
-        I started vaping at 16, got addicted for 5 years, and finally broke free at 21. 
-        Now I help teens like you understand what I wish someone told me back then.
-        
-        No lectures, no judgment - just real talk from someone who's lived it.
-        """)
-    
-    chatbot = gr.Chatbot(
-        type="messages",
-        height=450,
-        avatar_images=(
-            "https://api.dicebear.com/7.x/avataaars/svg?seed=teen&backgroundColor=E3F2FD",
-            "https://api.dicebear.com/7.x/avataaars/svg?seed=alex&backgroundColor=2196F3&clothing=hoodie"
-        ),
-        show_label=False,
-        elem_id="chatbot"
-    )
-    
-    msg = gr.Textbox(
-        placeholder="💬 What's on your mind?",
-        show_label=False,
-        container=False
-    )
-    
-    with gr.Row():
-        submit = gr.Button("Send 📤", variant="primary", scale=3)
-        clear = gr.Button("Clear 🗑️", scale=1)
-    
-    gr.Examples(
-        examples=[
-            "🤔 Why did you start vaping?",
-            "💪 How did you quit?",
-            "👥 All my friends vape...",
-            "💨 What's inside a vape?",
-            "❤️ What happens when I quit?",
-            "💰 How much money did you save?"
-        ],
-        inputs=msg
-    )
-    
-    # بخش ادمین با پسورد
-    with gr.Accordion("🔐 Admin Access (Password Required)", open=False):
-        gr.Markdown("**For administrators only**")
-        
-        admin_password = gr.Textbox(
-            label="Admin Password",
-            type="password",
-            placeholder="Enter admin password"
-        )
-        
-        login_btn = gr.Button("Login 🔓", variant="secondary")
-        
-        admin_status = gr.Markdown("🔒 Please enter password")
-        
-        with gr.Row(visible=True) as admin_panel:
-            download_btn = gr.Button("Download CSV Logs 💾")
-            download_file = gr.File(label="Download", visible=True)
-    
-    gr.Markdown("""
-    ---
-    💙 **Privacy Notice**: Your conversations are saved anonymously for research purposes to improve this chatbot.
-    
-    *For medical emergencies, please contact a healthcare professional immediately.*
-    """)
-    
-    def user_submit(user_message, chat_history):
-        return "", chat_history + [{"role": "user", "content": user_message}]
-    
-    def bot_respond(chat_history):
-        history_tuples = []
-        for i in range(0, len(chat_history)-1, 2):
-            if i+1 < len(chat_history):
-                history_tuples.append((chat_history[i]["content"], chat_history[i+1]["content"]))
-        
-        user_message = chat_history[-1]["content"]
-        bot_message = chat_function(user_message, history_tuples)
-        return chat_history + [{"role": "assistant", "content": bot_message}]
-    
-    # Event handlers
-    msg.submit(user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
-        bot_respond, chatbot, chatbot
-    )
-    
-    submit.click(user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
-        bot_respond, chatbot, chatbot
-    )
-    
-    clear.click(lambda: [], None, chatbot, queue=False)
-    
-    # Admin login
-    login_btn.click(
-        lambda pwd: verify_admin(pwd)[1],
-        inputs=admin_password,
-        outputs=admin_status
-    )
-    
-    # Download logs
-    download_btn.click(
-        download_logs_admin,
-        inputs=admin_password,
-        outputs=download_file
-    )
+st.markdown("""
+---
+💙 **Privacy Notice**: Your conversations are saved anonymously for research purposes to improve this chatbot.
 
-demo.launch()
+*For medical emergencies, please contact a healthcare professional immediately.*
+""")
+
+with st.expander("🔐 Admin Access (Password Required)"):
+    admin_password = st.text_input("Admin Password", type="password", key="admin_pwd")
+    if st.button("Login 🔓"):
+        _, stats = verify_admin(admin_password)
+        st.markdown(stats, unsafe_allow_html=True)
+        if stats.startswith("✅"):
+            if st.button("Download CSV Logs 💾"):
+                file_content = download_logs_admin(admin_password)
+                if file_content:
+                    st.download_button("Download chat_logs.csv", file_content, "chat_logs.csv")
+                else:
+                    st.error("CSV file not found!")
+
